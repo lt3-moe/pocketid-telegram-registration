@@ -136,6 +136,13 @@ func createPocketUser(ctx context.Context, data UserCreateData) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Treat 409 Conflict as a non-error (user already exists)
+		if resp.StatusCode == http.StatusConflict {
+			// consume body for completeness
+			_, _ = io.ReadAll(resp.Body)
+			log.Printf("pocket user already exists (409), ignoring")
+			return nil
+		}
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("non-2xx response: %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
