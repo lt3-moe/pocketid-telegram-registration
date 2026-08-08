@@ -12,8 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"net/url"
+
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"github.com/joho/godotenv"
 )
 
 type UserCreateData struct {
@@ -47,6 +50,50 @@ func getUserParams(user *models.User) UserCreateData {
 	}
 }
 
+// Config holds all runtime configuration read from environment or .env
+type Config struct {
+	TelegramBotToken string
+	PocketIDURL      string
+	PocketIDToken    string
+	ListenAddr       string
+}
+
+var appConfig Config
+
+func loadConfig() (Config, error) {
+	// Load .env if present; ignore error if file missing
+	_ = godotenv.Load()
+
+	cfg := Config{
+		TelegramBotToken: strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		PocketIDURL:      strings.TrimSpace(os.Getenv("POCKETID_URL")),
+		PocketIDToken:    strings.TrimSpace(os.Getenv("POCKETID_TOKEN")),
+		ListenAddr:       strings.TrimSpace(os.Getenv("LISTEN_ADDR")),
+	}
+
+	if cfg.ListenAddr == "" {
+		cfg.ListenAddr = ":8080"
+	}
+
+	if cfg.TelegramBotToken == "" {
+		return cfg, fmt.Errorf("TELEGRAM_BOT_TOKEN is required")
+	}
+	if cfg.PocketIDURL == "" {
+		return cfg, fmt.Errorf("POCKETID_URL is required")
+	}
+	if cfg.PocketIDToken == "" {
+		return cfg, fmt.Errorf("POCKETID_TOKEN is required")
+	}
+
+	// validate pocketid url
+	u, err := url.Parse(cfg.PocketIDURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return cfg, fmt.Errorf("POCKETID_URL must be a valid http(s) URL")
+	}
+
+	return cfg, nil
+}
+
 func onStart(ctx context.Context, bot *bot.Bot, update *models.Update) {
 	log.Printf("hello from %s\n", update.Message.From.Username)
 	params := getUserParams(update.Message.From)
@@ -59,8 +106,8 @@ func onStart(ctx context.Context, bot *bot.Bot, update *models.Update) {
 }
 
 func createPocketUser(ctx context.Context, data UserCreateData) error {
-	root := strings.TrimSpace(os.Getenv("POCKETID_URL"))
-	token := strings.TrimSpace(os.Getenv("POCKETID_TOKEN"))
+	root := strings.TrimSpace(appConfig.PocketIDURL)
+	token := strings.TrimSpace(appConfig.PocketIDToken)
 	if root == "" || token == "" {
 		return fmt.Errorf("POCKETID_URL and POCKETID_TOKEN are required")
 	}
@@ -108,17 +155,17 @@ func onOther(ctx context.Context, b *bot.Bot, update *models.Update) {
 }
 
 func main() {
-	token := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
-
-	if token == "" {
-		log.Fatal("TELEGRAM_BOT_TOKEN is required")
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatalf("config error: %v", err)
 	}
+	appConfig = cfg
 
 	opts := []bot.Option{
 		bot.WithDefaultHandler(onOther),
 	}
 
-	b, err := bot.New(token, opts...)
+	b, err := bot.New(cfg.TelegramBotToken, opts...)
 	if err != nil {
 		log.Fatalf("failed to create telegram bot: %v", err)
 	}
@@ -140,7 +187,7 @@ func main() {
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 	})
 
-	addr := ":8080"
+	addr := appConfig.ListenAddr
 	log.Printf("listening on %s", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatalf("http server failed: %v", err)
