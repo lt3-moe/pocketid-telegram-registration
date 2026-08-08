@@ -30,6 +30,70 @@ type UserCreateData struct {
 	Disabled      bool
 }
 
+// PocketUser represents the user object returned by PocketId API
+type PocketUser struct {
+	ID            string `json:"id"`
+	Username      string `json:"username"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"emailVerified"`
+	FirstName     string `json:"firstName"`
+	LastName      string `json:"lastName"`
+	DisplayName   string `json:"displayName"`
+	IsAdmin       bool   `json:"isAdmin"`
+	Disabled      bool   `json:"disabled"`
+}
+
+type pocketUserSearchResponse struct {
+	Data []PocketUser `json:"data"`
+}
+
+// searchPocketUser searches PocketId for a user matching the provided email.
+// Returns the first matching user or (nil, nil) if none found.
+func searchPocketUser(ctx context.Context, query string) (*PocketUser, error) {
+	root := strings.TrimRight(appConfig.PocketIDURL, "/")
+	endpoint := root + "/api/users"
+
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("pagination[limit]", "20")
+	q.Set("pagination[page]", "1")
+	q.Set("search", query)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-API-KEY", appConfig.PocketIDToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		log.Printf("pocket user search error: status=%d headers=%v body=%s", resp.StatusCode, resp.Header, strings.TrimSpace(string(respBody)))
+		return nil, fmt.Errorf("non-2xx response: %d", resp.StatusCode)
+	}
+
+	var out pocketUserSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+
+	if len(out.Data) == 0 {
+		return nil, nil
+	}
+
+	return &out.Data[0], nil
+}
+
 func getUserParams(user *models.User) UserCreateData {
 	var username string
 	if user.Username != "" {
@@ -98,10 +162,24 @@ func onStart(ctx context.Context, bot *bot.Bot, update *models.Update) {
 	log.Printf("hello from %s\n", update.Message.From.Username)
 	params := getUserParams(update.Message.From)
 
+	// Always attempt to create the user first. 409 is ignored inside createPocketUser.
 	if err := createPocketUser(ctx, params); err != nil {
 		log.Printf("failed to create pocket user: %v", err)
+		// continue to search even if create returned an error
 	} else {
-		log.Printf("created pocket user: %s", params.Username)
+		log.Printf("attempted to create pocket user: %s", params.Username)
+	}
+
+	// Now search by email to obtain the user's ID (may be the existing or newly created user)
+	u, err := searchPocketUser(ctx, params.Email)
+	if err != nil {
+		log.Printf("error searching pocket user: %v", err)
+		return
+	}
+	if u != nil {
+		log.Printf("pocket user id: %s", u.ID)
+	} else {
+		log.Printf("could not find user after create: %s", params.Email)
 	}
 }
 
