@@ -82,7 +82,7 @@ func loadConfig() (Config, error) {
 	return cfg, nil
 }
 
-const INVITE_LIFETIME = 5 * 60
+const INVITE_LIFETIME = 60 * 60
 
 func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 	log.Printf("hello from %s\n", update.Message.From.Username)
@@ -128,6 +128,8 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 		Text:   fmt.Sprintf("Your single-use invite link: %s\n\nUse it to set a passkey and log in without telegram. The link will remain valid for 5 minutes.", invite),
 	}); err != nil {
 		log.Printf("failed to send invite link: %v", err)
+	} else {
+		log.Printf("Sent an invite link to %s (%d)", update.Message.From.Username, update.Message.From.ID)
 	}
 }
 
