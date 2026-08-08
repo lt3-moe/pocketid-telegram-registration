@@ -1,100 +1,24 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
-	"time"
-
-	"net/url"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/joho/godotenv"
+
+	"github.com/lt3moe/oidc-discovery-proxy/pkg/pocketapi"
 )
 
-type UserCreateData struct {
-	FirstName     string
-	LastName      string
-	DisplayName   string
-	Email         string
-	EmailVerified bool
-	Username      string
-	IsAdmin       bool
-	Disabled      bool
-}
+var pocketClient *pocketapi.Client
 
-// PocketUser represents the user object returned by PocketId API
-type PocketUser struct {
-	ID            string `json:"id"`
-	Username      string `json:"username"`
-	Email         string `json:"email"`
-	EmailVerified bool   `json:"emailVerified"`
-	FirstName     string `json:"firstName"`
-	LastName      string `json:"lastName"`
-	DisplayName   string `json:"displayName"`
-	IsAdmin       bool   `json:"isAdmin"`
-	Disabled      bool   `json:"disabled"`
-}
-
-type pocketUserSearchResponse struct {
-	Data []PocketUser `json:"data"`
-}
-
-// searchPocketUser searches PocketId for a user matching the provided email.
-// Returns the first matching user or (nil, nil) if none found.
-func searchPocketUser(ctx context.Context, query string) (*PocketUser, error) {
-	root := strings.TrimRight(appConfig.PocketIDURL, "/")
-	endpoint := root + "/api/users"
-
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return nil, err
-	}
-	q := u.Query()
-	q.Set("pagination[limit]", "20")
-	q.Set("pagination[page]", "1")
-	q.Set("search", query)
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-API-KEY", appConfig.PocketIDToken)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		log.Printf("pocket user search error: status=%d headers=%v body=%s", resp.StatusCode, resp.Header, strings.TrimSpace(string(respBody)))
-		return nil, fmt.Errorf("non-2xx response: %d", resp.StatusCode)
-	}
-
-	var out pocketUserSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-
-	if len(out.Data) == 0 {
-		return nil, nil
-	}
-
-	return &out.Data[0], nil
-}
-
-func getUserParams(user *models.User) UserCreateData {
+func getUserParams(user *models.User) pocketapi.UserCreateData {
 	var username string
 	if user.Username != "" {
 		username = user.Username
@@ -102,7 +26,7 @@ func getUserParams(user *models.User) UserCreateData {
 		username = fmt.Sprintf("id%d", user.ID)
 	}
 
-	return UserCreateData{
+	return pocketapi.UserCreateData{
 		Username:      username,
 		Email:         fmt.Sprintf("id%d@tg.lt3.moe", user.ID),
 		FirstName:     user.FirstName,
@@ -164,8 +88,8 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 	log.Printf("hello from %s\n", update.Message.From.Username)
 	params := getUserParams(update.Message.From)
 
-	// Always attempt to create the user first. 409 is ignored inside createPocketUser.
-	if err := createPocketUser(ctx, params); err != nil {
+	// Always attempt to create the user first. 409 is ignored inside the API client.
+	if err := pocketClient.CreateUser(ctx, params); err != nil {
 		log.Printf("failed to create pocket user: %v", err)
 		// continue to search even if create returned an error
 	} else {
@@ -173,7 +97,7 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 
 	// Now search by email to obtain the user's ID (may be the existing or newly created user)
-	u, err := searchPocketUser(ctx, params.Email)
+	u, err := pocketClient.SearchUser(ctx, params.Email)
 	if err != nil {
 		log.Printf("error searching pocket user: %v", err)
 		return
@@ -189,7 +113,7 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 	log.Printf("pocket user id: %s", u.ID)
 
 	// create one-time token
-	token, err := createOneTimeToken(ctx, u.ID, INVITE_LIFETIME)
+	token, err := pocketClient.CreateOneTimeToken(ctx, u.ID, INVITE_LIFETIME)
 	if err != nil {
 		log.Printf("failed to create one-time token: %v", err)
 		return
@@ -207,95 +131,7 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 }
 
-func createPocketUser(ctx context.Context, data UserCreateData) error {
-	root := strings.TrimSpace(appConfig.PocketIDURL)
-	token := strings.TrimSpace(appConfig.PocketIDToken)
-	if root == "" || token == "" {
-		return fmt.Errorf("POCKETID_URL and POCKETID_TOKEN are required")
-	}
-
-	// Ensure we POST to the /api/users endpoint on the provided root URL.
-	endpoint := strings.TrimRight(root, "/") + "/api/users"
-
-	body, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	// Use X-API-KEY header for the PocketId API key
-	req.Header.Set("X-API-KEY", token)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-
-		respBody, _ := io.ReadAll(resp.Body)
-		// Log full HTTP response (status, headers, body) for debugging
-		log.Printf("pocket API error response: status=%d headers=%v body=%s", resp.StatusCode, resp.Header, strings.TrimSpace(string(respBody)))
-
-		// Treat 409 Conflict as a non-error (user already exists)
-		if resp.StatusCode == http.StatusConflict {
-			log.Printf("pocket user already exists (409), ignoring")
-			return nil
-		}
-		return fmt.Errorf("non-2xx response: %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-
-	return nil
-}
-
-// createOneTimeToken requests a one-time access token for the given user ID with the
-// specified TTL (seconds). It returns the token string on success.
-func createOneTimeToken(ctx context.Context, userID string, ttl int) (string, error) {
-	root := strings.TrimRight(appConfig.PocketIDURL, "/")
-	endpoint := fmt.Sprintf("%s/api/users/%s/one-time-access-token", root, userID)
-
-	payload := map[string]int{"ttl": ttl}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-KEY", appConfig.PocketIDToken)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("one-time-token error: status=%d headers=%v body=%s", resp.StatusCode, resp.Header, strings.TrimSpace(string(respBody)))
-		return "", fmt.Errorf("non-2xx response: %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-
-	// Try direct shape: {"token":"..."}
-	var tokenResp struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
-		return "", err
-	}
-
-	return tokenResp.Token, nil
-}
+// API client methods moved to pkg/pocketapi
 
 const helpMessage = "Type /start to register in <3 PocketId. I will give you a one-time link to add a new passkey."
 
@@ -314,6 +150,13 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 	appConfig = cfg
+
+	// initialize API client
+	pc, err := pocketapi.NewClient(appConfig.PocketIDURL, appConfig.PocketIDToken, nil)
+	if err != nil {
+		log.Fatalf("failed to initialize pocket api client: %v", err)
+	}
+	pocketClient = pc
 
 	opts := []bot.Option{
 		bot.WithDefaultHandler(onOther),
