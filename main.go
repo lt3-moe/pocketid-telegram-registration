@@ -158,7 +158,9 @@ func loadConfig() (Config, error) {
 	return cfg, nil
 }
 
-func onStart(ctx context.Context, bot *bot.Bot, update *models.Update) {
+const INVITE_LIFETIME = 5 * 60
+
+func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 	log.Printf("hello from %s\n", update.Message.From.Username)
 	params := getUserParams(update.Message.From)
 
@@ -176,10 +178,32 @@ func onStart(ctx context.Context, bot *bot.Bot, update *models.Update) {
 		log.Printf("error searching pocket user: %v", err)
 		return
 	}
-	if u != nil {
-		log.Printf("pocket user id: %s", u.ID)
-	} else {
+
+	if u == nil {
 		log.Printf("could not find user after create: %s", params.Email)
+		return
+	}
+
+	// print id to stdout
+	fmt.Println(u.ID)
+	log.Printf("pocket user id: %s", u.ID)
+
+	// create one-time token
+	token, err := createOneTimeToken(ctx, u.ID, INVITE_LIFETIME)
+	if err != nil {
+		log.Printf("failed to create one-time token: %v", err)
+		return
+	}
+
+	host := strings.TrimRight(appConfig.PocketIDURL, "/")
+	invite := fmt.Sprintf("%s/lc/%s", host, token)
+
+	// send invite link back to Telegram user
+	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: update.Message.Chat.ID,
+		Text:   fmt.Sprintf("Your single-use invite link: %s\n\nUse it to set a passkey and log in without telegram. The link will remain valid for 5 minutes.", invite),
+	}); err != nil {
+		log.Printf("failed to send invite link: %v", err)
 	}
 }
 
@@ -228,6 +252,49 @@ func createPocketUser(ctx context.Context, data UserCreateData) error {
 	}
 
 	return nil
+}
+
+// createOneTimeToken requests a one-time access token for the given user ID with the
+// specified TTL (seconds). It returns the token string on success.
+func createOneTimeToken(ctx context.Context, userID string, ttl int) (string, error) {
+	root := strings.TrimRight(appConfig.PocketIDURL, "/")
+	endpoint := fmt.Sprintf("%s/api/users/%s/one-time-access-token", root, userID)
+
+	payload := map[string]int{"ttl": ttl}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-KEY", appConfig.PocketIDToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Printf("one-time-token error: status=%d headers=%v body=%s", resp.StatusCode, resp.Header, strings.TrimSpace(string(respBody)))
+		return "", fmt.Errorf("non-2xx response: %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	// Try direct shape: {"token":"..."}
+	var tokenResp struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
+		return "", err
+	}
+
+	return tokenResp.Token, nil
 }
 
 const helpMessage = "Type /start to register in <3 PocketId. I will give you a one-time link to add a new passkey."
