@@ -138,6 +138,14 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 const helpMessage = "Type /start to register in <3 PocketId. I will give you a one-time link to add a new passkey."
 
 func onOther(ctx context.Context, b *bot.Bot, update *models.Update) {
+	if update == nil || update.Message == nil {
+		log.Printf("skipping non-chat event")
+		return
+	}
+	if update.Message.Chat.Type != models.ChatTypePrivate {
+		log.Printf("not replying outside of private chat: %s", update.Message.Chat.Title)
+		return
+	}
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: update.Message.Chat.ID,
 		Text:   helpMessage,
