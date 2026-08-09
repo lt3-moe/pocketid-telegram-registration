@@ -90,7 +90,7 @@ Your single-use invite link:
 
 Use it to set a passkey so that you could log in without Telegram.
 
-On Linux, Storing passkeys currently requires a browser extension like <a href="https://keepassxc.org/docs/KeePassXC_GettingStarted#_install_the_browser_extension">KeePassXC</a> or <a href="https://addons.mozilla.org/en-US/firefox/addon/linux-passkey-manager/">Linux Passkey Manager</a> (Firefox) unless you are using a Chromium-based browser and are logged into a Google account.
+On Linux, Storing passkeys currently requires a browser extension like <a href="https://keepassxc.org/docs/KeePassXC_GettingStarted#_install_the_browser_extension">KeePassXC</a> or <a href="https://addons.mozilla.org/en-US/firefox/addon/linux-passkey-manager/">Linux Passkey Manager</a> (Firefox) unless you are using a Chromium-based browser and are logged into a Google account. On Chromium-based browsers, you can also use an Android phone to store and access passkeys via Bluetooth.
 `
 
 func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
