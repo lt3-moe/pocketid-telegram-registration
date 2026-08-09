@@ -84,6 +84,15 @@ func loadConfig() (Config, error) {
 
 const INVITE_LIFETIME = 60 * 60
 
+const PASSKEY_LINK_MESSAGE = `
+Your single-use invite link:
+%s
+
+Use it to set a passkey so that you could log in without Telegram.
+
+On Linux, Storing passkeys currently requires a browser extension like <a href="https://keepassxc.org/docs/KeePassXC_GettingStarted#_install_the_browser_extension">KeePassXC</a> or <a href="https://addons.mozilla.org/en-US/firefox/addon/linux-passkey-manager/">Linux Passkey Manager</a> (Firefox) unless you are using a Chromium-based browser and are logged into a Google account.
+`
+
 func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 	log.Printf("hello from %s\n", update.Message.From.Username)
 	params := getUserParams(update.Message.From)
@@ -124,8 +133,9 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	// send invite link back to Telegram user
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   fmt.Sprintf("Your single-use invite link: %s\n\nUse it to set a passkey so that you could log in without telegram.", invite),
+		ChatID:    update.Message.Chat.ID,
+		Text:      fmt.Sprintf(PASSKEY_LINK_MESSAGE, invite),
+		ParseMode: models.ParseModeHTML,
 	}); err != nil {
 		log.Printf("failed to send invite link: %v", err)
 	} else {
@@ -189,10 +199,13 @@ func main() {
 
 	go b.Start(context.TODO())
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	botRedirect := func(w http.ResponseWriter, r *http.Request) {
 		redirectURL := fmt.Sprintf("https://t.me/%s?start=register", me.Username)
 		http.Redirect(w, r, redirectURL, http.StatusFound)
-	})
+	}
+
+	http.HandleFunc("/", botRedirect)
+	http.HandleFunc("/telegram-registration", botRedirect)
 
 	addr := appConfig.ListenAddr
 	log.Printf("listening on %s", addr)
