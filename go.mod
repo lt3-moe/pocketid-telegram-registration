@@ -1,4 +1,4 @@
-module github.com/lt3moe/oidc-discovery-proxy
+module pocketid-registration-bot
 
 go 1.22
 

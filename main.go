@@ -9,11 +9,11 @@ import (
 	"os"
 	"strings"
 
+	"pocketid-registration-bot/pkg/pocketapi"
+
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/joho/godotenv"
-
-	"github.com/lt3moe/oidc-discovery-proxy/pkg/pocketapi"
 )
 
 var pocketClient *pocketapi.Client
