@@ -125,7 +125,7 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 	// send invite link back to Telegram user
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: update.Message.Chat.ID,
-		Text:   fmt.Sprintf("Your single-use invite link: %s\n\nUse it to set a passkey and log in without telegram. The link will remain valid for 5 minutes.", invite),
+		Text:   fmt.Sprintf("Your single-use invite link: %s\n\nUse it to set a passkey so that you could log in without telegram.", invite),
 	}); err != nil {
 		log.Printf("failed to send invite link: %v", err)
 	} else {
