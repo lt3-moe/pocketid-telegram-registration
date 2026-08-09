@@ -145,7 +145,7 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 // API client methods moved to pkg/pocketapi
 
-const helpMessage = "Type /start to register in <3 PocketId. I will give you a one-time link to add a new passkey."
+const helpMessage = "Send /start to register in <3 PocketId. I will give you a one-time link to add a new passkey."
 
 func onOther(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update == nil || update.Message == nil {
