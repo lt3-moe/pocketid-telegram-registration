@@ -91,7 +91,7 @@ func onStart(ctx context.Context, b *bot.Bot, update *models.Update) {
 	// Always attempt to create the user first. 409 is ignored inside the API client.
 	if err := pocketClient.CreateUser(ctx, params); err != nil {
 		log.Printf("failed to create pocket user: %v", err)
-		// continue to search even if create returned an error
+		return
 	} else {
 		log.Printf("attempted to create pocket user: %s", params.Username)
 	}
